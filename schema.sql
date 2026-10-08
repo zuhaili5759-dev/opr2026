@@ -1,0 +1,17 @@
+create extension if not exists pgcrypto;
+create table if not exists public.profiles (id uuid primary key references auth.users(id) on delete cascade, full_name text not null default '', role text not null default 'teacher' check(role in ('teacher','admin')), school_name text not null default 'Sekolah');
+create table if not exists public.opr (id uuid primary key default gen_random_uuid(), user_id uuid not null references public.profiles(id) on delete cascade, title text not null, event_date date not null, teacher_name text not null, objective text default '', activity text default '', outcome text default '', remarks text default '', status text not null default 'Selesai', created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+create table if not exists public.opr_images (id uuid primary key default gen_random_uuid(), opr_id uuid not null references public.opr(id) on delete cascade, path text not null, sort_order int not null default 1, created_at timestamptz not null default now());
+alter table public.profiles enable row level security; alter table public.opr enable row level security; alter table public.opr_images enable row level security;
+create or replace function public.is_admin() returns boolean language sql stable security definer set search_path=public as $$ select exists(select 1 from public.profiles where id=auth.uid() and role='admin') $$;
+create policy "profiles own read" on public.profiles for select using (id=auth.uid() or public.is_admin());
+create policy "opr read own or admin" on public.opr for select using (user_id=auth.uid() or public.is_admin());
+create policy "opr insert own" on public.opr for insert with check (user_id=auth.uid());
+create policy "opr update own or admin" on public.opr for update using (user_id=auth.uid() or public.is_admin()) with check (user_id=auth.uid() or public.is_admin());
+create policy "opr delete own or admin" on public.opr for delete using (user_id=auth.uid() or public.is_admin());
+create policy "images read via opr" on public.opr_images for select using (exists(select 1 from public.opr where opr.id=opr_images.opr_id and (opr.user_id=auth.uid() or public.is_admin())));
+create policy "images insert via opr" on public.opr_images for insert with check (exists(select 1 from public.opr where opr.id=opr_images.opr_id and opr.user_id=auth.uid()));
+insert into storage.buckets(id,name,public) values ('opr-images','opr-images',true) on conflict(id) do nothing;
+create policy "opr image upload own folder" on storage.objects for insert to authenticated with check (bucket_id='opr-images' and (storage.foldername(name))[1]=auth.uid()::text);
+create policy "opr image public read" on storage.objects for select using (bucket_id='opr-images');
+create policy "opr image delete own folder" on storage.objects for delete to authenticated using (bucket_id='opr-images' and (storage.foldername(name))[1]=auth.uid()::text);
